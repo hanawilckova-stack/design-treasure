@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="cs">
 <head>
@@ -187,6 +188,20 @@
       cursor: pointer;
     }
     .card:hover { box-shadow: 0 10px 36px var(--shadow-h); transform: translateY(-3px); }
+    .card.dragging { opacity: .35; transform: scale(.97); }
+    .card.drop-before { box-shadow: -4px 0 0 var(--accent), 0 10px 36px var(--shadow-h); }
+    .card.drop-after  { box-shadow:  4px 0 0 var(--accent), 0 10px 36px var(--shadow-h); }
+
+    /* Drag handle */
+    .card-drag-handle {
+      position: absolute; top: 10px; left: 10px; z-index: 10;
+      width: 28px; height: 28px; border-radius: 7px;
+      background: rgba(0,0,0,.45); color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; transition: opacity .2s; cursor: grab;
+    }
+    .card:hover .card-drag-handle { opacity: 1; }
+    .card-drag-handle:active { cursor: grabbing; }
 
     .card-thumb {
       width: 100%; height: 155px; object-fit: cover;
@@ -524,7 +539,10 @@ let addingCat  = null;
 let pendingImg = '';
 let fetchTimer = null;
 let confirmCb  = null;
-let openMenuId = null;
+let openMenuId   = null;
+let dragId       = null;
+let dragOverId   = null;
+let dragBefore   = true;
 
 // ══════════════════════════════════════════
 //  PERSISTENCE
@@ -554,7 +572,7 @@ document.getElementById('themeBtn').addEventListener('click', () => {
 // ══════════════════════════════════════════
 //  RENDER
 // ══════════════════════════════════════════
-function render() { renderTabs(); renderCatHeader(); renderGrid(); renderLoginBtn(); }
+function render() { renderTabs(); renderCatHeader(); renderGrid(); renderLoginBtn(); if (loggedIn) initDrag(); }
 
 function renderTabs() {
   const row = document.getElementById('tabsRow');
@@ -591,13 +609,21 @@ function renderCard(link) {
   const domain = getDomain(link.url);
   const fav = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`;
 
+  const grip = loggedIn ? `<div class="card-drag-handle" title="Přesunout">
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+      <circle cx="3.5" cy="2.5" r="1.2"/><circle cx="8.5" cy="2.5" r="1.2"/>
+      <circle cx="3.5" cy="6"   r="1.2"/><circle cx="8.5" cy="6"   r="1.2"/>
+      <circle cx="3.5" cy="9.5" r="1.2"/><circle cx="8.5" cy="9.5" r="1.2"/>
+    </svg>
+  </div>` : '';
+
   const thumb = link.img
-    ? `<img class="card-thumb" src="${escA(link.img)}" alt=""
+    ? `${grip}<img class="card-thumb" src="${escA(link.img)}" alt=""
         onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
        <div class="card-thumb-favicon" style="display:none;background:${thumbBg(domain)}">
          <img src="${fav}" alt="" onerror="this.style.display='none'">
        </div>`
-    : `<div class="card-thumb-favicon" style="background:${thumbBg(domain)}">
+    : `${grip}<div class="card-thumb-favicon" style="background:${thumbBg(domain)}">
          <img src="${fav}" alt="" onerror="this.style.display='none'">
        </div>`;
 
@@ -630,6 +656,57 @@ function renderLoginBtn() {
   } else {
     btn.textContent = 'Přihlásit'; btn.classList.remove('on'); btn.onclick = () => openOv('loginOverlay');
   }
+}
+
+// ══════════════════════════════════════════
+//  DRAG & DROP REORDER
+// ══════════════════════════════════════════
+function initDrag() {
+  document.querySelectorAll('.card').forEach(card => {
+    const id = card.id.slice(1);
+    const handle = card.querySelector('.card-drag-handle');
+    if (!handle) return;
+
+    // Only the grip handle is draggable
+    handle.setAttribute('draggable', 'true');
+
+    handle.addEventListener('dragstart', e => {
+      dragId = id;
+      e.dataTransfer.effectAllowed = 'move';
+      // Use whole card as ghost image
+      const r = card.getBoundingClientRect();
+      e.dataTransfer.setDragImage(card, e.clientX - r.left, e.clientY - r.top);
+      requestAnimationFrame(() => card.classList.add('dragging'));
+    });
+
+    handle.addEventListener('dragend', () => {
+      document.querySelectorAll('.card').forEach(c =>
+        c.classList.remove('dragging', 'drop-before', 'drop-after'));
+      dragId = null; dragOverId = null;
+    });
+
+    // Drop target is the whole card
+    card.addEventListener('dragover', e => {
+      e.preventDefault();
+      if (id === dragId) return;
+      const rect = card.getBoundingClientRect();
+      dragBefore = e.clientX < rect.left + rect.width / 2;
+      dragOverId = id;
+      document.querySelectorAll('.card').forEach(c => c.classList.remove('drop-before','drop-after'));
+      card.classList.add(dragBefore ? 'drop-before' : 'drop-after');
+    });
+
+    card.addEventListener('drop', e => {
+      e.preventDefault();
+      if (!dragId || !dragOverId || dragId === dragOverId) return;
+      const srcIdx = data.links.findIndex(l => l.id === dragId);
+      const [moved] = data.links.splice(srcIdx, 1);
+      let tgtIdx = data.links.findIndex(l => l.id === dragOverId);
+      if (!dragBefore) tgtIdx++;
+      data.links.splice(tgtIdx, 0, moved);
+      save(); render();
+    });
+  });
 }
 
 // ══════════════════════════════════════════
